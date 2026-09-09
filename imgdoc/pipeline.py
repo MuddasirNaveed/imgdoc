@@ -11,6 +11,12 @@ from .config import Config
 def process(path: Path, cfg: Config, use_dewarp: bool = False,
             strict: bool = False, debug_dir: Path | None = None) -> dict:
     bgr, meta = intake.load(path)
+    return process_loaded(bgr, meta, cfg, use_dewarp, strict, debug_dir, path.stem)
+
+
+def process_loaded(bgr, meta: dict, cfg: Config, use_dewarp: bool = False,
+                   strict: bool = False, debug_dir: Path | None = None,
+                   stem: str = "image") -> dict:
 
     # Everything downstream assumes dark ink on light paper. Normalise a
     # dark-mode screenshot before it is measured, not after.
@@ -57,7 +63,7 @@ def process(path: Path, cfg: Config, use_dewarp: bool = False,
 
     if debug_dir:
         debug_dir.mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(str(debug_dir / f"{path.stem}.processed.png"), gray)
+        cv2.imwrite(str(debug_dir / f"{stem}.processed.png"), gray)
 
     return {
         "schema_version": "1.0",
@@ -104,8 +110,13 @@ def _verdict(q: dict, mean_conf: float, blocks: list, word_count: int,
 
     if not reasons:
         return "pass", []
+    # The input checks are pre-OCR proxies for "OCR will fail". When OCR then
+    # comes back strong, the proxy was wrong: screen-rendered text is legible
+    # at glyph heights that would be unrecoverable in a photograph. Demote to
+    # review rather than reject, and say why.
     # A high mean confidence over a handful of words is the average of a few
-    # lucky reads, not evidence the page was recognised.
+    # lucky reads, not evidence the page was recognised. Require enough text
+    # before letting OCR results override the pre-OCR checks.
     if mean_conf >= cfg.conf_pass and blocks and word_count >= cfg.min_words:
         if not q["input_ok"]:
             reasons.append(

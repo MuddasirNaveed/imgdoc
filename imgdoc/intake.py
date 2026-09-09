@@ -1,5 +1,6 @@
 """Stage 0: intake. Load bytes, identify the real format, fix EXIF orientation."""
 import hashlib
+import io
 from pathlib import Path
 
 import numpy as np
@@ -11,16 +12,24 @@ class IntakeError(Exception):
 
 
 def load(path: Path):
-    """Return (bgr_array, meta). Format comes from the bytes, not the extension."""
-    raw = path.read_bytes()
+    """Return (bgr_array, meta) for a file on disk."""
+    return load_bytes(path.read_bytes(), str(path))
+
+
+def load_bytes(raw: bytes, label: str):
+    """Return (bgr_array, meta) for raw image bytes.
+
+    Used by the clipboard path, where the image never touches disk.
+    Format still comes from the bytes, never from a filename.
+    """
     if not raw:
-        raise IntakeError(f"{path} is empty")
+        raise IntakeError(f"{label} is empty")
 
     try:
-        img = Image.open(path)
+        img = Image.open(io.BytesIO(raw))
         img.load()
     except Exception as exc:
-        raise IntakeError(f"{path} is not a readable image: {exc}") from exc
+        raise IntakeError(f"{label} is not a readable image: {exc}") from exc
 
     fmt = img.format  # from the decoded header, not the filename
     before = img.size
@@ -34,7 +43,7 @@ def load(path: Path):
         img = img.convert("RGB")
 
     meta = {
-        "path": str(path),
+        "path": label,
         "sha256": hashlib.sha256(raw).hexdigest(),
         "format": fmt,
         "width": img.width,
