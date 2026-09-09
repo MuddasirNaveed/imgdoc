@@ -7,3 +7,7 @@ debug/
 diag/
 .vscode/
 .idea/
+build/
+dist/
+vendor/
+*.deb

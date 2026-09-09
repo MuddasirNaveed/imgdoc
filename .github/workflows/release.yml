@@ -1,0 +1,81 @@
+name: Build release artifacts
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install build and runtime deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-eng python3-tk
+          pip install -r requirements.txt pyinstaller
+      - name: Build binary
+        run: pyinstaller imgdoc.spec --clean --noconfirm
+      - name: Smoke test the binary
+        run: ./dist/imgdoc samples/clean.png -o /tmp/ci && grep -q "PURCHASE INVOICE" /tmp/ci/clean.md
+      - name: Build .deb
+        run: ./packaging/build_deb.sh "${GITHUB_REF_NAME#v}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*.deb
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Python deps
+        run: pip install -r requirements.txt pyinstaller
+      # Tesseract is a C++ binary with no pip package, so Windows has to ship
+      # it inside the exe. choco installs it; we copy the pieces into vendor/
+      # where imgdoc.spec picks them up.
+      - name: Vendor Tesseract
+        shell: pwsh
+        run: |
+          choco install tesseract --no-progress -y
+          $src = "C:\Program Files\Tesseract-OCR"
+          New-Item -ItemType Directory -Force -Path vendor\tesseract\tessdata | Out-Null
+          Copy-Item "$src\tesseract.exe" vendor\tesseract\
+          Copy-Item "$src\*.dll" vendor\tesseract\
+          Copy-Item "$src\tessdata\eng.traineddata" vendor\tesseract\tessdata\
+          Copy-Item "$src\tessdata\osd.traineddata" vendor\tesseract\tessdata\
+      - name: Build exe
+        run: pyinstaller imgdoc.spec --clean --noconfirm
+      - name: Smoke test the exe
+        shell: pwsh
+        run: |
+          .\dist\imgdoc.exe samples\clean.png -o ci_out
+          if (-not (Select-String -Path ci_out\clean.md -Pattern "PURCHASE INVOICE")) {
+            throw "exe produced no usable output"
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/imgdoc.exe
+
+  release:
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts }
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/linux/*.deb
+            artifacts/windows/imgdoc.exe

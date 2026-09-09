@@ -25,30 +25,68 @@ imgdoc does the reading once, offline:
 - **Nothing leaves your laptop.** Useful when the document is a contract, a
   payslip, or anything else you would rather not upload.
 
-## Get started
+## Install
+
+**Debian / Ubuntu** — grab the `.deb` from
+[Releases](../../releases) and:
 
 ```bash
-sudo apt install tesseract-ocr python3-tk
+sudo dpkg -i imgdoc_1.0.0_amd64.deb
+sudo apt-get install -f          # pulls in tesseract-ocr if missing
+```
+
+**From source** — any platform with Python 3.10+:
+
+```bash
+sudo apt install tesseract-ocr python3-tk    # or the equivalent for your OS
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Open the app, pick an image, copy the result:
+## Three ways to use it
+
+### 1. The app window
 
 ```bash
-python3 -m imgdoc.gui
+imgdoc                      # installed
+python3 -m imgdoc.gui       # from source
 ```
 
-Or from the terminal:
+Pick an image, read the verdict, hit **Copy to clipboard**. Toggle between
+Markdown and JSON without re-running anything.
+
+### 2. Clipboard hotkey (the fast one)
+
+Copy an image, press a hotkey, paste. The clipboard now holds Markdown instead
+of a picture — so it works in claude.ai, ChatGPT, Slack, your editor, anywhere.
 
 ```bash
-python3 -m imgdoc.cli invoice.png              # writes invoice.md and invoice.json
-python3 -m imgdoc.cli ./scans -o ./out -f md   # a whole folder, Markdown only
+sudo apt install wl-clipboard libnotify-bin   # or xclip on X11
+python3 -m imgdoc.clip
 ```
+
+Bind it in **Settings → Keyboard → Custom Shortcuts**, command
+`/opt/imgdoc/imgdoc --clip` (or a wrapper calling `python3 -m imgdoc.clip`),
+shortcut of your choice.
+
+Workflow: screenshot to clipboard → hotkey → wait for the notification → paste.
+
+If the image is too poor to read, the clipboard is **left untouched** and the
+notification tells you why. Replacing a good image with bad text would be the
+worst possible outcome.
+
+### 3. Terminal
+
+```bash
+imgdoc invoice.png                  # writes invoice.md and invoice.json
+imgdoc ./scans -o ./out -f md       # a whole folder, Markdown only
+imgdoc photo.jpg --dewarp           # photo of paper on a desk
+```
+
+Exit code is `1` if any image was rejected, so chain batch commands with `;`
+rather than `&&`.
 
 ## What comes out
-
-A photographed invoice goes in. This comes out:
 
 ```markdown
 # PURCHASE INVOICE
@@ -68,9 +106,6 @@ A photographed invoice goes in. This comes out:
 
 Payment is due within thirty days of the invoice date.
 ```
-
-Paste that straight into a chat, or use the JSON if you are building something
-around it.
 
 ## Use it in your own code
 
@@ -108,9 +143,67 @@ go through the same command. Corrections like deskew and rotation are applied
 only when they measurably improve the result, so a screenshot does not get
 "fixed" into something worse.
 
+## Build it yourself
+
+### Linux
+
+```bash
+pip install pyinstaller
+pyinstaller imgdoc.spec --clean --noconfirm
+./dist/imgdoc samples/clean.png -o /tmp/t     # smoke test
+./packaging/build_deb.sh 1.0.0
+sudo dpkg -i dist/imgdoc_1.0.0_amd64.deb
+```
+
+### Windows (.exe)
+
+There is no prebuilt Windows binary yet. PyInstaller cannot cross-compile, so
+the exe has to be produced on Windows. Two routes:
+
+**On a Windows machine.** Install
+[Python 3.12](https://www.python.org/downloads/) and
+[Tesseract for Windows](https://github.com/UB-Mannheim/tesseract/wiki), then:
+
+```powershell
+git clone https://github.com/MuddasirNaveed/imgdoc.git
+cd imgdoc
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt pyinstaller
+
+# Tesseract is a C++ binary with no pip package, so it must be bundled.
+mkdir vendor\tesseract\tessdata
+copy "C:\Program Files\Tesseract-OCR\tesseract.exe" vendor\tesseract\
+copy "C:\Program Files\Tesseract-OCR\*.dll" vendor\tesseract\
+copy "C:\Program Files\Tesseract-OCR\tessdata\eng.traineddata" vendor\tesseract\tessdata\
+copy "C:\Program Files\Tesseract-OCR\tessdata\osd.traineddata" vendor\tesseract\tessdata\
+
+pyinstaller imgdoc.spec --clean --noconfirm
+.\dist\imgdoc.exe samples\clean.png -o ci_out    # smoke test
+```
+
+`imgdoc.spec` detects Windows and pulls `vendor/tesseract` into the exe, so the
+result is self-contained — no separate Tesseract install needed on the machine
+that runs it.
+
+**Or let GitHub build it.** Push a tag and the workflow in
+`.github/workflows/release.yml` builds the Linux `.deb` and the Windows `.exe`
+on GitHub's runners and attaches both to a Release:
+
+```bash
+git tag v1.0.0 && git push origin v1.0.0
+```
+
+No Windows machine required. The Windows job is not yet verified against a real
+run — expect to iterate on the first tag.
+
+Binaries are around 110 MB, almost entirely OpenCV.
+
 ## Good to know
 
 - Tables need visible ruling lines. Borderless tables are read as ordinary text.
+- Panel borders in a screenshot can occasionally be mistaken for a table. The
+  result gets flagged, but it still appears in the output.
 - Bounding boxes refer to the processed image, not the original. Use
   `--debug-dir` to save what the OCR actually saw.
 - English by default. Other languages need the matching Tesseract language pack
