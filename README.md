@@ -1,17 +1,31 @@
 # imgdoc
 
-Converts document **images** to LLM-ready Markdown or JSON. Runs entirely on
-your machine — no API keys, no network calls, no telemetry. The only external
-dependency is the Tesseract binary from your distro's package manager.
+**Turn document images into clean text your LLM can actually read.**
 
-The point is to spend the OCR and layout cost once, offline and deterministically,
-so an LLM receives clean structured text instead of an image. That cuts tokens,
-removes per-call variance, and makes the result auditable.
+Feed it a scan, a photo, or a screenshot. Get back Markdown or JSON — small,
+structured, and ready to paste into any model.
 
-Handles scans, photos of paper, and screenshots (including dark mode) through
-the same pipeline.
+Runs entirely on your machine. No API keys, no uploads, no internet.
 
-## Install
+---
+
+## Why not just send the image?
+
+Sending an image to a model costs a lot of tokens, and you pay that cost again
+on every single message. The model also re-reads the layout from scratch each
+time, so the same page can be interpreted differently from one call to the next.
+
+imgdoc does the reading once, offline:
+
+- **Smaller prompts.** A page of text is a fraction of the size of a page as an
+  image, so you fit more context in and pay less for it.
+- **Faster replies.** Less to process means the model starts answering sooner.
+- **Same result every time.** Headings, tables, and key-value fields are
+  resolved deterministically, not re-guessed on each call.
+- **Nothing leaves your laptop.** Useful when the document is a contract, a
+  payslip, or anything else you would rather not upload.
+
+## Get started
 
 ```bash
 sudo apt install tesseract-ocr python3-tk
@@ -19,128 +33,90 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-`python3-tk` is only needed for the GUI. Add language packs as required, e.g.
-`tesseract-ocr-urd`.
-
-## Use
-
-Desktop UI — pick an image, read the verdict, copy the Markdown:
+Open the app, pick an image, copy the result:
 
 ```bash
 python3 -m imgdoc.gui
 ```
 
-Command line:
+Or from the terminal:
 
 ```bash
-python3 -m imgdoc.cli invoice.png                  # both formats into ./out
-python3 -m imgdoc.cli ./scans -o ./out -f md       # a directory, Markdown only
-python3 -m imgdoc.cli photo.jpg --dewarp           # photo of paper on a desk
-python3 -m imgdoc.cli ./scans --strict             # refuse bad images
-python3 -m imgdoc.cli img.png --debug-dir ./debug  # save the image OCR saw
+python3 -m imgdoc.cli invoice.png              # writes invoice.md and invoice.json
+python3 -m imgdoc.cli ./scans -o ./out -f md   # a whole folder, Markdown only
 ```
 
-Exit code is `1` if any image was rejected, `0` otherwise. Because of that,
-chain batch commands with `;` rather than `&&`.
+## What comes out
 
-## Pipeline
+A photographed invoice goes in. This comes out:
 
-| Stage | Module | What it does |
-|---|---|---|
-| Intake | `intake.py` | Format from bytes, EXIF orientation, SHA-256 |
-| Polarity | `quality.py` | Detects and normalises light-on-dark input |
-| Quality gate | `quality.py` | Blur, dark clipping, ink/paper contrast, glyph height |
-| Geometry | `preprocess.py` | OSD rotation, optional dewarp, fine deskew |
-| Photometric | `preprocess.py` | Shadow flattening, capped upscale |
-| Tables | `tables.py` | Ruled-line detection, per-cell OCR with confidence |
-| OCR | `ocr.py` | Word boxes and confidences retained |
-| Structure | `structure.py` | Headings, paragraphs, key-values from relative geometry |
-| IR | `pipeline.py` | One typed-block schema |
-| Render | `render.py` | Markdown and JSON, both derived from the IR |
+```markdown
+# PURCHASE INVOICE
 
-Markdown and JSON are views of the same intermediate representation, so they
-cannot disagree. Nothing re-reads the image after OCR.
+- **Invoice No**: INV-2026-0417
+- **Issued**: 04 September 2026
+- **Vendor**: Northline Supplies Ltd
 
-### Corrections are verified, not assumed
+## Line items
 
-Deskew, OSD rotation, dewarp and illumination flattening are corrections for
-photographed paper. Applied blindly to a screenshot they destroy it — a
-screenshot has no skew, so the angle detector locks onto UI rectangles and
-rotates crisp text through interpolation.
+| Item     | Qty | Unit  | Total |
+| ---      | --- | ---   | ---   |
+| Cable A  | 12  | 4.50  | 54.00 |
+| Bracket  | 30  | 2.10  | 63.00 |
 
-Each correction is therefore measured against a trial OCR pass on a
-downsampled copy and kept only if it improves recognition. Rejected
-corrections are listed in `preprocessing.rejected` so the output explains
-itself.
+## Notes
 
-This costs 2-4 extra downsampled OCR passes per image. On very large batches
-that is real time; it is the price of handling scans and screenshots through
-one pipeline without hand-tuned per-source thresholds.
+Payment is due within thirty days of the invoice date.
+```
 
-## Verdicts
+Paste that straight into a chat, or use the JSON if you are building something
+around it.
 
-Every output carries `pass`, `review` or `reject` plus the reasons. This is the
-point of the tool. An OCR pipeline that silently emits confident wrong numbers
-is worse than one that refuses.
+## Use it in your own code
 
-Tables are read cell by cell and each cell keeps its own confidence, so a
-misread cell is flagged rather than rendered as clean Markdown.
+```python
+from pathlib import Path
+from imgdoc.pipeline import process
+from imgdoc.config import DEFAULT
+from imgdoc import render
 
-A high mean confidence over very few words is not evidence of success, so
-results below `min_words` do not let OCR override the pre-OCR checks.
+doc = process(Path("invoice.png"), DEFAULT)
+markdown = render.to_markdown(doc)      # send this to your model
+```
 
-## Calibration
+`doc` is a plain dict with typed blocks, so you can pull out just the tables or
+just the key-value fields if that is all you need.
 
-`imgdoc/config.py` holds every threshold. **The defaults are starting points,
-not calibrated values** — `blur_min` in particular is resolution-dependent.
-Run the tool over 20-30 of your own images, read the reported `blur_score`,
-`ink_contrast` and `median_text_height_px`, and set thresholds from what you
-actually see.
+## It tells you when it is unsure
 
-Two known-noisy defaults: `cell_conf_min` (70.0) flags some cells that were
-read correctly, and `text_height_min` (10) fires on most screenshots, where
-8px screen text is perfectly legible.
+Bad OCR that looks confident is worse than no OCR. Every result carries a
+verdict — `pass`, `review`, or `reject` — with the reasons attached:
 
-## Verified behaviour
+```
+REVIEW  invoice.png  conf=94.8  blocks=9
+        - table [5, 4]: low-confidence cells: r1c0='Cable A'
+```
 
-Measured against fixtures with known ground truth, on Tesseract 5.5.0 and
-OpenCV 5.0.0:
+Tables are read cell by cell and each cell keeps its own confidence score, so a
+misread number gets flagged instead of quietly appearing in your output as
+though it were correct.
 
-| Fixture | Result |
-|---|---|
-| Clean 1000x1000 invoice | `review`, 9 blocks, table matches ground truth on all 20 cells |
-| Same page rotated 6 degrees | deskew accepted, 93.1 mean confidence |
-| Same page rotated 90 degrees | OSD rotation accepted, `pass`, 9 blocks |
-| Dark-mode code screenshot | polarity inverted, 16 blocks at 86.8 |
-| UI screenshot with chrome | bogus 180 degree flip rejected: 37.5 to 90.3 confidence |
-| Gaussian blur radius 4 | `reject` at the quality gate |
-| Downscaled to 300x300 | `reject`; misread cells flagged individually |
+## Works with messy input
 
-On a real 3801x1376 browser screenshot, rejecting a spurious 7.23 degree deskew
-and the illumination flattening took the result from 1 word at 55.8 confidence
-to 683 words at 81.0, against a manual best case of 82.9.
+Crooked scans, phone photos, 90-degree rotations, and dark-mode screenshots all
+go through the same command. Corrections like deskew and rotation are applied
+only when they measurably improve the result, so a screenshot does not get
+"fixed" into something worse.
 
-## Limitations
+## Good to know
 
-Real and deliberate, not oversights.
-
-- **Borderless tables are not detected.** Only tables with visible ruling
-  lines. A borderless table falls through to the prose extractor and its
-  numbers are flattened into a paragraph.
-- **UI chrome can be mistaken for a table.** Panel borders in a screenshot
-  sometimes trip the ruled-line detector. The integrity check flags the
-  result, but the spurious table still appears in the output.
-- **Glare is not detected.** The exposure check catches underexposure and low
-  ink/paper contrast only.
-- **Bounding boxes are in processed-image space**, not original-image space.
-  The geometry chain is not inverted. Use `--debug-dir` to save the processed
-  image if you need to verify a box against pixels.
-- **Heading levels come from relative glyph height only.** A document that
-  signals hierarchy through bold or colour will come out flat.
-- **Multi-column reading order is whatever Tesseract's page segmentation
-  decides.** Not independently verified here.
-- **Language defaults to `eng`.** Other languages need the matching Tesseract
-  language pack and `--lang`. Accuracy for non-Latin scripts is untested.
+- Tables need visible ruling lines. Borderless tables are read as ordinary text.
+- Bounding boxes refer to the processed image, not the original. Use
+  `--debug-dir` to save what the OCR actually saw.
+- English by default. Other languages need the matching Tesseract language pack
+  and `--lang urd` (or whichever you install).
+- Thresholds in `imgdoc/config.py` are sensible starting points, not tuned for
+  your documents. Run a handful of your own files and adjust if needed.
 
 ## Licence
 
