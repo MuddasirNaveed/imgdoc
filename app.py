@@ -37,6 +37,10 @@ def main() -> int:
     multiprocessing.freeze_support()  # required on Windows for frozen apps
     _bundled_tesseract()
 
+    if len(sys.argv) > 1 and sys.argv[1] == "--clip":
+        from imgdoc.clip import main as clip_main
+        return clip_main()
+
     if len(sys.argv) > 1:
         from imgdoc.cli import main as cli_main
         return cli_main()
