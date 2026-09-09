@@ -144,4 +144,4 @@ Real and deliberate, not oversights.
 
 ## Licence
 
-Add one before publishing if this is going public.
+MIT — see [LICENSE](LICENSE). Copyright (c) 2026 Muddasir Naveed.
